@@ -1,0 +1,99 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(CANDIDATE)
+  createdAt    DateTime @default(now())
+
+  sessions      Session[]
+  refreshTokens RefreshToken[]
+}
+
+enum Role {
+  CANDIDATE
+  INTERVIEWER
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  tokenHash String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+}
+
+model Session {
+  id        String        @id @default(uuid())
+  roomCode  String        @unique @default(uuid())
+  status    SessionStatus @default(WAITING)
+  startedAt DateTime?
+  endedAt   DateTime?
+  createdAt DateTime      @default(now())
+
+  candidate   User   @relation(fields: [candidateId], references: [id])
+  candidateId String
+
+  messages    Message[]
+  submissions CodeSubmission[]
+  evaluation  Evaluation?
+}
+
+enum SessionStatus {
+  WAITING
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  role      MessageRole
+  content   String
+  createdAt DateTime    @default(now())
+
+  session   Session @relation(fields: [sessionId], references: [id])
+  sessionId String
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+model CodeSubmission {
+  id          String   @id @default(uuid())
+  language    String
+  code        String
+  result      Json?
+  submittedAt DateTime @default(now())
+
+  session   Session @relation(fields: [sessionId], references: [id])
+  sessionId String
+}
+
+model Evaluation {
+  id        String   @id @default(uuid())
+  score     Int
+  feedback  String
+  metrics   Json
+  createdAt DateTime @default(now())
+
+  session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId String  @unique
+}

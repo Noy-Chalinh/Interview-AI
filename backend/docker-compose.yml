@@ -1,0 +1,137 @@
+services:
+
+  # ── Application database (Neon in prod; local postgres for dev) ───────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: interviewai
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d interviewai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── App Redis (sessions, rate limiting, socket presence) ──────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend API + Socket.IO ───────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://admin:secret@postgres:5432/interviewai?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-7d}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      JUDGE0_URL: http://judge0-server:2358
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
+      PORT: 3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      judge0-server:
+        condition: service_started
+
+  # ── Frontend (Vite dev server / static build) ─────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_URL: http://localhost:3000
+      VITE_SOCKET_URL: http://localhost:3000
+    depends_on:
+      - backend
+
+  # ── Judge0 services ────────────────────────────────────────────────────────────
+  judge0-server:
+    image: judge0/judge0:1.13.1
+    restart: unless-stopped
+    volumes:
+      - ./judge0.conf:/judge0.conf:ro
+    ports:
+      - "2358:2358"
+    privileged: true
+    environment:
+      REDIS_HOST: judge0-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://judge0-redis:6379
+      POSTGRES_HOST: judge0-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0secret
+    depends_on:
+      - judge0-postgres
+      - judge0-redis
+
+  judge0-workers:
+    image: judge0/judge0:1.13.1
+    command: ["./scripts/workers"]
+    restart: unless-stopped
+    volumes:
+      - ./judge0.conf:/judge0.conf:ro
+    privileged: true
+    environment:
+      REDIS_HOST: judge0-redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://judge0-redis:6379
+      POSTGRES_HOST: judge0-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0secret
+    depends_on:
+      - judge0-postgres
+      - judge0-redis
+
+  judge0-postgres:
+    image: postgres:13
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0secret
+    volumes:
+      - judge0-pgdata:/var/lib/postgresql/data
+
+  judge0-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - judge0-redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
+  judge0-pgdata:
+  judge0-redisdata:
