@@ -5,68 +5,57 @@ const TIMER_DURATION = 60 * 60; // 60 minutes in seconds
 
 function registerSessionHandlers(io, socket) {
   const userId = socket.user.userId;
+  const userRole = socket.user.role;
 
   // ── session:join ────────────────────────────────────────────────────────────
-  // Frontend emits this when a candidate enters an interview room
   socket.on('session:join', async ({ sessionId }) => {
     try {
-      const userRole = socket.user.role;
-
-      // Candidates can only join their own session.
-      // Interviewers and admins can join any session.
-      const session = await prisma.session.findFirst({
-        where:
-          userRole === 'CANDIDATE'
-            ? { id: sessionId, candidateId: userId }
-            : { id: sessionId }
-      });
+      const session = await prisma.session.findUnique({ where: { id: sessionId } });
 
       if (!session) {
-        socket.emit('session:error', { message: 'Session not found or access denied' });
+        socket.emit('session:error', { message: 'Session not found' });
         return;
       }
 
-      // join the Socket.io room for this session
+      // Candidate can only join a session they own (either practice or invited)
+      if (userRole === 'CANDIDATE' && session.candidateId !== userId) {
+        socket.emit('session:error', { message: 'Access denied' });
+        return;
+      }
+
+      // Interviewer can only join sessions they created
+      if (userRole === 'INTERVIEWER' && session.interviewerId !== userId) {
+        socket.emit('session:error', { message: 'Access denied' });
+        return;
+      }
+
       socket.join(sessionId);
 
-      // persist socketId in Redis so we can find this socket on reconnect
       await redis.hset(`socket:session:${sessionId}`, userId, socket.id);
-      await redis.expire(`socket:session:${sessionId}`, 60 * 60 * 24); // 24hr TTL
-
-      // track which session this socket belongs to (for disconnect cleanup)
+      await redis.expire(`socket:session:${sessionId}`, 60 * 60 * 24);
       await redis.set(`socket:user:${socket.id}`, sessionId, 'EX', 60 * 60 * 24);
 
-      // if session is still WAITING and the candidate is joining, mark it as ACTIVE
+      // Start the session when the candidate joins a WAITING session
       if (session.status === 'WAITING' && userRole === 'CANDIDATE') {
         await prisma.session.update({
           where: { id: sessionId },
           data: { status: 'ACTIVE', startedAt: new Date() }
         });
 
-        // start the session timer
         startSessionTimer(io, sessionId, TIMER_DURATION);
 
-        // notify everyone in the room the session has started
-        io.to(sessionId).emit('session:start', {
-          sessionId,
-          startedAt: new Date()
-        });
-
+        io.to(sessionId).emit('session:start', { sessionId, startedAt: new Date() });
         console.log(`Session ${sessionId} started`);
       } else {
-        // candidate is reconnecting — restore state
         const remaining = await redis.get(`timer:${sessionId}`);
-
         socket.emit('session:reconnected', {
           sessionId,
           status: session.status,
           remainingSeconds: remaining ? parseInt(remaining) : null
         });
-
         console.log(`User ${userId} reconnected to session ${sessionId}`);
       }
 
-      // notify peers in the room this user is back
       socket.to(sessionId).emit('user:online', { userId });
 
     } catch (err) {
@@ -78,21 +67,30 @@ function registerSessionHandlers(io, socket) {
   // ── session:end ─────────────────────────────────────────────────────────────
   socket.on('session:end', async ({ sessionId }) => {
     try {
+      const session = await prisma.session.findUnique({ where: { id: sessionId } });
+
+      if (!session) {
+        socket.emit('session:error', { message: 'Session not found' });
+        return;
+      }
+
+      // Only the candidate or the interviewer who owns the session can end it
+      const isCandidate = userRole === 'CANDIDATE' && session.candidateId === userId;
+      const isInterviewer = (userRole === 'INTERVIEWER' || userRole === 'ADMIN') && session.interviewerId === userId;
+
+      if (!isCandidate && !isInterviewer) {
+        socket.emit('session:error', { message: 'Not authorized to end this session' });
+        return;
+      }
+
       await prisma.session.update({
         where: { id: sessionId },
         data: { status: 'COMPLETED', endedAt: new Date() }
       });
 
-      // stop the timer
       await redis.del(`timer:${sessionId}`);
 
-      // notify everyone in the room
-      io.to(sessionId).emit('session:ended', {
-        sessionId,
-        endedAt: new Date()
-      });
-
-      // clean up Redis presence
+      io.to(sessionId).emit('session:ended', { sessionId, endedAt: new Date() });
       await redis.hdel(`socket:session:${sessionId}`, userId);
 
       console.log(`Session ${sessionId} ended by user ${userId}`);
@@ -105,19 +103,14 @@ function registerSessionHandlers(io, socket) {
   // ── disconnect ──────────────────────────────────────────────────────────────
   socket.on('disconnect', async () => {
     try {
-      // find which session this socket was in
       const sessionId = await redis.get(`socket:user:${socket.id}`);
       if (!sessionId) return;
 
-      // remove this socket from the session's presence map
       await redis.hdel(`socket:session:${sessionId}`, userId);
       await redis.del(`socket:user:${socket.id}`);
 
-      // mark session as ABANDONED if no sockets remain in the room
       const roomSockets = await io.in(sessionId).fetchSockets();
       if (roomSockets.length === 0) {
-        // give a 30 second grace period before marking abandoned
-        // (client might reconnect quickly)
         setTimeout(async () => {
           const stillEmpty = (await io.in(sessionId).fetchSockets()).length === 0;
           if (stillEmpty) {
@@ -130,7 +123,6 @@ function registerSessionHandlers(io, socket) {
         }, 30000);
       }
 
-      // notify peers this user went offline
       socket.to(sessionId).emit('user:offline', { userId });
 
     } catch (err) {
@@ -144,28 +136,29 @@ function registerSessionHandlers(io, socket) {
 function startSessionTimer(io, sessionId, durationSeconds) {
   let remaining = durationSeconds;
 
-  // store initial remaining time in Redis
   redis.set(`timer:${sessionId}`, remaining, 'EX', durationSeconds + 60);
 
   const interval = setInterval(async () => {
-    remaining -= 60; // tick every 60 seconds
+    remaining -= 60;
 
     if (remaining <= 0) {
       clearInterval(interval);
       await redis.del(`timer:${sessionId}`);
+
+      await prisma.session.updateMany({
+        where: { id: sessionId, status: 'ACTIVE' },
+        data: { status: 'COMPLETED', endedAt: new Date() }
+      });
 
       io.to(sessionId).emit('session:timer', { sessionId, remaining: 0 });
       io.to(sessionId).emit('session:timeout', { sessionId });
       return;
     }
 
-    // update Redis with current remaining time
     await redis.set(`timer:${sessionId}`, remaining, 'EX', remaining + 60);
-
-    // emit to everyone in the room every minute
     io.to(sessionId).emit('session:timer', { sessionId, remaining });
 
-  }, 60 * 1000); // every 60 seconds
+  }, 60 * 1000);
 }
 
 module.exports = { registerSessionHandlers };

@@ -15,10 +15,9 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string, role: UserRole) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string, role: UserRole) => Promise<void>;
   logout: () => void;
-  setUserRole: (role: UserRole) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -56,7 +55,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = async (email: string, password: string, _role: UserRole) => {
+  // Role is a property of the account (set at registration) and comes from the
+  // server, never chosen at login — so the JWT and the UI can never disagree.
+  const login = async (email: string, password: string) => {
     const { data } = await api.post('/auth/login', { email, password });
     const u = normalizeUser(data.user);
     localStorage.setItem('accessToken', data.accessToken);
@@ -99,14 +100,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigate('/login');
   };
 
-  const setUserRole = (role: UserRole) => {
-    if (user) {
-      const updatedUser = { ...user, role };
-      setUser(updatedUser);
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-    }
-  };
-
   return (
     <AuthContext.Provider
       value={{
@@ -115,7 +108,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         register,
         logout,
-        setUserRole,
       }}
     >
       {children}

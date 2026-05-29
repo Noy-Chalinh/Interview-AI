@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { useAuth, UserRole } from '../contexts/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
-import { Code2, Eye, EyeOff, UserCircle, Briefcase } from 'lucide-react';
+import { Code2, Eye, EyeOff } from 'lucide-react';
 
 export function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<UserRole>('candidate');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -20,7 +19,7 @@ export function Login() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(email, password, role);
+      await login(email, password);
       navigate('/lobby');
     } catch (err: any) {
       const message =
@@ -58,36 +57,6 @@ export function Login() {
           <h2 className="text-xl text-[#F8FAFC] mb-6 text-center">Sign in to your account</h2>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm mb-1.5 text-[#F8FAFC]">Role</label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setRole('candidate')}
-                  className={`flex items-center gap-2 px-4 py-3 rounded-lg border transition-all ${
-                    role === 'candidate'
-                      ? 'bg-[#10B981] border-[#10B981] text-[#0F172A]'
-                      : 'bg-[#0F172A] border-[#334155] text-[#94A3B8] hover:border-[#10B981]'
-                  }`}
-                >
-                  <UserCircle className="w-5 h-5" />
-                  <span className="text-sm">Candidate</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRole('interviewer')}
-                  className={`flex items-center gap-2 px-4 py-3 rounded-lg border transition-all ${
-                    role === 'interviewer'
-                      ? 'bg-[#10B981] border-[#10B981] text-[#0F172A]'
-                      : 'bg-[#0F172A] border-[#334155] text-[#94A3B8] hover:border-[#10B981]'
-                  }`}
-                >
-                  <Briefcase className="w-5 h-5" />
-                  <span className="text-sm">Interviewer</span>
-                </button>
-              </div>
-            </div>
-
             <div>
               <label className="block text-sm mb-1.5 text-[#F8FAFC]">Email</label>
               <Input

@@ -67,10 +67,21 @@ export function InterviewRoom() {
   const [showParticipants, setShowParticipants] = useState(false);
   const [copied, setCopied] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date>(new Date());
+  const [roomCode, setRoomCode] = useState<string | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const streamingMessageIdRef = useRef<string | null>(null);
+
+  // ── Fetch roomCode for display ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!sessionId) return;
+    import('../../lib/api').then(({ api }) => {
+      api.get(`/sessions/${sessionId}`)
+        .then(({ data }) => setRoomCode(data.session?.roomCode ?? null))
+        .catch(() => {});
+    });
+  }, [sessionId]);
 
   // ── Socket lifecycle ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -305,8 +316,8 @@ export function InterviewRoom() {
     socket.emit('chat:message', { sessionId, content: text });
   };
 
-  const handleCopySessionId = () => {
-    navigator.clipboard.writeText(sessionId || '');
+  const handleCopyRoomCode = () => {
+    navigator.clipboard.writeText(roomCode || sessionId || '');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -326,9 +337,9 @@ export function InterviewRoom() {
         <div className="flex items-center gap-4">
           <h1 className="text-lg text-[#F8FAFC]">Interview Session</h1>
           <div className="flex items-center gap-2 px-3 py-1 bg-[#0F172A] rounded-lg">
-            <span className="text-xs text-[#94A3B8]">ID:</span>
-            <code className="text-xs text-[#10B981]">{sessionId}</code>
-            <button onClick={handleCopySessionId} className="ml-1 text-[#94A3B8] hover:text-[#10B981]">
+            <span className="text-xs text-[#94A3B8]">Room:</span>
+            <code className="text-xs text-[#10B981]">{roomCode ?? sessionId}</code>
+            <button onClick={handleCopyRoomCode} className="ml-1 text-[#94A3B8] hover:text-[#10B981]">
               {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
             </button>
           </div>

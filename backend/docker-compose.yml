@@ -73,9 +73,6 @@ services:
       - backend
 
   # ── Piston code execution sandbox ─────────────────────────────────────────────
-  # Works on cgroup v2 (unlike Judge0 1.13.x).
-  # Language runtimes are installed on first use via the /packages endpoint;
-  # see scripts/piston-bootstrap.sh.
   piston:
     image: ghcr.io/engineer-man/piston
     restart: unless-stopped

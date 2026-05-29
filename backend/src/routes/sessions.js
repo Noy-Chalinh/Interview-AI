@@ -1,53 +1,85 @@
 const express = require('express');
 const prisma = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roleGuard');
 
 const router = express.Router();
 
-// ── POST /sessions — create a new interview session ───────────────────────────
-// Only interviewers and admins can create sessions
+// ── POST /sessions — create a new session ─────────────────────────────────────
+// Candidate: creates a private practice session (no body needed)
+// Interviewer/Admin: creates an open session — no candidate required upfront;
+//   a roomCode is returned which the candidate uses to join later.
 router.post('/', authenticate, async (req, res) => {
   try {
     const { userId, role } = req.user;
-    const { candidateId, candidateEmail } = req.body;
 
-    let resolvedCandidateId = candidateId;
-
-    // Candidates can create their own practice session (no body needed)
     if (role === 'CANDIDATE') {
-      resolvedCandidateId = userId;
-    } else if (role === 'INTERVIEWER' || role === 'ADMIN') {
-      if (!resolvedCandidateId && candidateEmail) {
-        const found = await prisma.user.findUnique({ where: { email: candidateEmail } });
-        if (!found || found.role !== 'CANDIDATE') {
-          return res.status(404).json({ error: 'Candidate not found' });
-        }
-        resolvedCandidateId = found.id;
-      }
-      if (!resolvedCandidateId) {
-        return res.status(400).json({ error: 'candidateId or candidateEmail is required' });
-      }
-    } else {
-      return res.status(403).json({ error: 'Forbidden' });
+      const session = await prisma.session.create({
+        data: { candidateId: userId },
+        include: { candidate: { select: { id: true, name: true, email: true } } }
+      });
+      return res.status(201).json({ session });
     }
 
-    const candidate = await prisma.user.findUnique({ where: { id: resolvedCandidateId } });
-    if (!candidate || candidate.role !== 'CANDIDATE') {
-      return res.status(404).json({ error: 'Candidate not found' });
+    if (role === 'INTERVIEWER' || role === 'ADMIN') {
+      const session = await prisma.session.create({
+        data: { interviewerId: userId },
+        include: { interviewer: { select: { id: true, name: true, email: true } } }
+      });
+      return res.status(201).json({ session });
     }
 
-    const session = await prisma.session.create({
-      data: {
-        candidateId: resolvedCandidateId,
-        ...(role === 'INTERVIEWER' || role === 'ADMIN' ? { interviewerId: userId } : {}),
-      },
-      include: { candidate: { select: { id: true, name: true, email: true } } }
-    });
-
-    res.status(201).json({ session });
+    return res.status(403).json({ error: 'Forbidden' });
   } catch (err) {
     console.error('Create session error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── POST /sessions/join — candidate joins an interviewer session via roomCode ──
+router.post('/join', authenticate, async (req, res) => {
+  try {
+    const { userId, role } = req.user;
+
+    if (role !== 'CANDIDATE') {
+      return res.status(403).json({ error: 'Only candidates can join via room code' });
+    }
+
+    const { roomCode } = req.body;
+    if (!roomCode) {
+      return res.status(400).json({ error: 'roomCode is required' });
+    }
+
+    const session = await prisma.session.findUnique({
+      where: { roomCode: roomCode.trim() }
+    });
+
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    if (!session.interviewerId) {
+      return res.status(400).json({ error: 'This is a private practice session' });
+    }
+
+    if (session.candidateId && session.candidateId !== userId) {
+      return res.status(409).json({ error: 'Session already has a candidate' });
+    }
+
+    if (session.status === 'COMPLETED' || session.status === 'ABANDONED') {
+      return res.status(400).json({ error: 'Session is no longer active' });
+    }
+
+    // Claim the session if not already claimed by this candidate
+    const updated = session.candidateId
+      ? session
+      : await prisma.session.update({
+          where: { id: session.id },
+          data: { candidateId: userId }
+        });
+
+    res.json({ session: updated });
+  } catch (err) {
+    console.error('Join session error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -69,6 +101,7 @@ router.get('/', authenticate, async (req, res) => {
       where,
       include: {
         candidate: { select: { id: true, name: true, email: true } },
+        interviewer: { select: { id: true, name: true, email: true } },
         evaluation: { select: { score: true } }
       },
       orderBy: { createdAt: 'desc' }
@@ -88,6 +121,7 @@ router.get('/:id', authenticate, async (req, res) => {
       where: { id: req.params.id },
       include: {
         candidate: { select: { id: true, name: true, email: true } },
+        interviewer: { select: { id: true, name: true, email: true } },
         messages: { orderBy: { createdAt: 'asc' } },
         evaluation: true
       }

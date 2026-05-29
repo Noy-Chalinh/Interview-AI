@@ -21,6 +21,7 @@ app.use('/analytics', apiLimiter);      // 120 req/min per user
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/auth', require('./src/routes/auth'));
 app.use('/sessions', require('./src/routes/sessions'));
+app.use('/analytics', require('./src/routes/analytics'));
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok' }));

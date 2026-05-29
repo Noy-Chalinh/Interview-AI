@@ -47,8 +47,8 @@ model Session {
   endedAt   DateTime?
   createdAt DateTime      @default(now())
 
-  candidate    User    @relation("CandidateSessions", fields: [candidateId], references: [id])
-  candidateId  String
+  candidate    User?   @relation("CandidateSessions", fields: [candidateId], references: [id])
+  candidateId  String?
 
   interviewer   User?   @relation("InterviewerSessions", fields: [interviewerId], references: [id])
   interviewerId String?

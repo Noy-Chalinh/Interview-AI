@@ -11,6 +11,13 @@ const router = express.Router();
 
 router.get('/overview', authenticate, requireRole('INTERVIEWER', 'ADMIN'), async (req, res) => {
   try {
+    const { userId, role } = req.user;
+
+    // Interviewers only see analytics for the sessions they own.
+    // Private candidate practice sessions (no interviewerId) are never counted.
+    // ADMIN sees the whole platform.
+    const sessionWhere = role === 'ADMIN' ? {} : { interviewerId: userId };
+
     const [
       totalSessions,
       completedSessions,
@@ -20,36 +27,39 @@ router.get('/overview', authenticate, requireRole('INTERVIEWER', 'ADMIN'), async
       topLanguages,
       recentSessions,
     ] = await Promise.all([
-      // total sessions ever created
-      prisma.session.count(),
+      // total sessions in scope
+      prisma.session.count({ where: sessionWhere }),
 
       // sessions that reached COMPLETED
-      prisma.session.count({ where: { status: 'COMPLETED' } }),
+      prisma.session.count({ where: { ...sessionWhere, status: 'COMPLETED' } }),
 
       // currently ACTIVE
-      prisma.session.count({ where: { status: 'ACTIVE' } }),
+      prisma.session.count({ where: { ...sessionWhere, status: 'ACTIVE' } }),
 
       // abandoned sessions
-      prisma.session.count({ where: { status: 'ABANDONED' } }),
+      prisma.session.count({ where: { ...sessionWhere, status: 'ABANDONED' } }),
 
-      // avg + min + max evaluation score across all evaluations
+      // avg + min + max evaluation score across evaluations in scope
       prisma.evaluation.aggregate({
+        where: { session: sessionWhere },
         _avg: { score: true },
         _min: { score: true },
         _max: { score: true },
         _count: { score: true },
       }),
 
-      // top languages from code submissions — group by language, count desc
+      // top languages from code submissions in scope — group by language, count desc
       prisma.codeSubmission.groupBy({
         by: ['language'],
+        where: { session: sessionWhere },
         _count: { language: true },
         orderBy: { _count: { language: 'desc' } },
         take: 5,
       }),
 
-      // 7 most recent sessions with candidate name and score
+      // 7 most recent sessions in scope with candidate name and score
       prisma.session.findMany({
+        where: sessionWhere,
         take: 7,
         orderBy: { createdAt: 'desc' },
         include: {
@@ -115,9 +125,13 @@ router.get('/sessions', authenticate, async (req, res) => {
 
     const where = {};
 
-    // candidates only see their own sessions
+    // Candidates only see their own sessions (practice + invited).
+    // Interviewers only see the sessions they own — never candidates' private practice.
+    // ADMIN sees everything.
     if (role === 'CANDIDATE') {
       where.candidateId = userId;
+    } else if (role === 'INTERVIEWER') {
+      where.interviewerId = userId;
     }
 
     // optional status filter
