@@ -8,7 +8,6 @@ import { InterviewRoom } from './pages/InterviewRoomEnhanced';
 import { Evaluation } from './pages/Evaluation';
 import { History } from './pages/History';
 import { QuestionBank } from './pages/QuestionBank';
-import { Candidates } from './pages/Candidates';
 import { InterviewSettings } from './pages/InterviewSettings';
 
 export function AppRoutes() {
@@ -51,12 +50,6 @@ export function AppRoutes() {
       <Route path="/questions" element={
         <ProtectedRoute>
           <QuestionBank />
-        </ProtectedRoute>
-      } />
-
-      <Route path="/candidates" element={
-        <ProtectedRoute>
-          <Candidates />
         </ProtectedRoute>
       } />
 

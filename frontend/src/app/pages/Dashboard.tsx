@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../../lib/api';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
-import { Code2, TrendingUp, Award, Code, Menu, Users, BookOpen, Settings } from 'lucide-react';
+import { Code2, TrendingUp, Award, Code, Menu, BookOpen, Settings } from 'lucide-react';
 
 interface ApiSession {
   id: string;
@@ -89,7 +89,6 @@ export function Dashboard() {
     ? [
         { name: 'Dashboard', path: '/dashboard', icon: Code2, active: true },
         { name: 'Questions', path: '/questions', icon: BookOpen, active: false },
-        { name: 'Candidates', path: '/candidates', icon: Users, active: false },
         { name: 'New Session', path: '/lobby', icon: Code, active: false },
         { name: 'History', path: '/history', icon: TrendingUp, active: false },
         { name: 'Settings', path: '/settings', icon: Settings, active: false },
