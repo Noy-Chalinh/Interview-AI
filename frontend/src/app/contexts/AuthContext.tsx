@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useNavigate } from 'react-router';
+import { api } from '../../lib/api';
+import { disconnectSocket } from '../../lib/socket';
 
 export type UserRole = 'candidate' | 'interviewer';
 
@@ -21,49 +23,77 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function toApiRole(role: UserRole): 'CANDIDATE' | 'INTERVIEWER' {
+  return role === 'candidate' ? 'CANDIDATE' : 'INTERVIEWER';
+}
+
+function fromApiRole(role: string): UserRole {
+  return role === 'INTERVIEWER' ? 'interviewer' : 'candidate';
+}
+
+function normalizeUser(raw: any): User {
+  return {
+    id: raw.id,
+    email: raw.email,
+    name: raw.name,
+    role: fromApiRole(raw.role),
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Check for existing session
-    const token = localStorage.getItem('token');
+    const token = localStorage.getItem('accessToken');
     const userData = localStorage.getItem('user');
     if (token && userData) {
-      setUser(JSON.parse(userData));
+      try {
+        setUser(JSON.parse(userData));
+      } catch {
+        localStorage.removeItem('user');
+      }
     }
   }, []);
 
-  const login = async (email: string, password: string, role: UserRole) => {
-    // Mock API call - in production, this would call your backend
-    const mockUser: User = {
-      id: Math.random().toString(36).substring(7),
-      email,
-      name: email.split('@')[0],
-      role,
-    };
-
-    localStorage.setItem('token', 'mock-jwt-token-' + Date.now());
-    localStorage.setItem('user', JSON.stringify(mockUser));
-    setUser(mockUser);
+  const login = async (email: string, password: string, _role: UserRole) => {
+    const { data } = await api.post('/auth/login', { email, password });
+    const u = normalizeUser(data.user);
+    localStorage.setItem('accessToken', data.accessToken);
+    localStorage.setItem('refreshToken', data.refreshToken);
+    localStorage.setItem('user', JSON.stringify(u));
+    setUser(u);
   };
 
-  const register = async (email: string, password: string, name: string, role: UserRole) => {
-    // Mock API call
-    const mockUser: User = {
-      id: Math.random().toString(36).substring(7),
-      email,
+  const register = async (
+    email: string,
+    password: string,
+    name: string,
+    role: UserRole
+  ) => {
+    const { data } = await api.post('/auth/register', {
       name,
-      role,
-    };
-
-    localStorage.setItem('token', 'mock-jwt-token-' + Date.now());
-    localStorage.setItem('user', JSON.stringify(mockUser));
-    setUser(mockUser);
+      email,
+      password,
+      role: toApiRole(role),
+    });
+    const u = normalizeUser(data.user);
+    localStorage.setItem('accessToken', data.accessToken);
+    localStorage.setItem('refreshToken', data.refreshToken);
+    localStorage.setItem('user', JSON.stringify(u));
+    setUser(u);
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
+  const logout = async () => {
+    const refreshToken = localStorage.getItem('refreshToken');
+    try {
+      await api.post('/auth/logout', { refreshToken });
+    } catch {
+      // ignore — log out locally regardless
+    }
+    disconnectSocket();
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
     setUser(null);
     navigate('/login');

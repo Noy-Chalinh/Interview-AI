@@ -25,5 +25,8 @@ app.use('/sessions', require('./src/routes/sessions'));
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
+const httpServer = http.createServer(app);
+initSocket(httpServer);
+
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => console.log(`Backend running on port ${PORT}`));

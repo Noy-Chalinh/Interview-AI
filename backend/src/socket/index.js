@@ -1,7 +1,6 @@
 const { Server } = require('socket.io');
 const { authenticateSocket } = require('../middleware/auth');
 const { registerSessionHandlers } = require('./sessionHandlers');
-const { registerPresenceHandlers } = require('./presenceHandlers');
 const { registerChatHandlers } = require('./chatHandlers');
 const { registerCodeHandlers } = require('./codeHandlers');
 
@@ -22,7 +21,6 @@ function initSocket(httpServer) {
     console.log(`Socket connected: ${socket.id} | user: ${socket.user.userId}`);
 
     registerSessionHandlers(io, socket);
-    registerPresenceHandlers(io, socket);
     registerChatHandlers(io, socket);
     registerCodeHandlers(io, socket);
 

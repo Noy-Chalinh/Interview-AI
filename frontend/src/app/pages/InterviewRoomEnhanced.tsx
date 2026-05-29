@@ -3,50 +3,20 @@ import { useParams, useNavigate } from 'react-router';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import Editor from '@monaco-editor/react';
 import { useAuth } from '../contexts/AuthContext';
+import { getSocket } from '../../lib/socket';
 import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
 import { StatusDot } from '../components/StatusDot';
-import { Play, Send, Clock, X, Users, Sparkles, Copy, Check, RefreshCw } from 'lucide-react';
+import {
+  Play, Send, Clock, X, Users, Sparkles, Copy, Check, RefreshCw,
+} from 'lucide-react';
 
 const LANGUAGES = [
-  { value: 'python', label: 'Python', pistonId: 'python' },
-  { value: 'javascript', label: 'JavaScript', pistonId: 'javascript' },
-  { value: 'java', label: 'Java', pistonId: 'java' },
-  { value: 'cpp', label: 'C++', pistonId: 'cpp' },
-  { value: 'go', label: 'Go', pistonId: 'go' },
-];
-
-const CODING_CHALLENGES = [
-  {
-    id: '1',
-    title: 'Two Sum',
-    difficulty: 'Easy',
-    description: 'Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target.',
-    template: {
-      python: '# Write your solution here\ndef two_sum(nums, target):\n    pass\n\n# Test case\nprint(two_sum([2,7,11,15], 9))',
-      javascript: '// Write your solution here\nfunction twoSum(nums, target) {\n    // Your code\n}\n\n// Test case\nconsole.log(twoSum([2,7,11,15], 9));',
-    },
-  },
-  {
-    id: '2',
-    title: 'Valid Parentheses',
-    difficulty: 'Medium',
-    description: 'Given a string containing just the characters \'(\', \')\', \'{\', \'}\', \'[\' and \']\', determine if the input string is valid.',
-    template: {
-      python: '# Write your solution here\ndef is_valid(s):\n    pass\n\n# Test case\nprint(is_valid("()[]{}"))',
-      javascript: '// Write your solution here\nfunction isValid(s) {\n    // Your code\n}\n\n// Test case\nconsole.log(isValid("()[]{}"));',
-    },
-  },
-  {
-    id: '3',
-    title: 'Binary Tree Level Order Traversal',
-    difficulty: 'Hard',
-    description: 'Given the root of a binary tree, return the level order traversal of its nodes\' values.',
-    template: {
-      python: '# Write your solution here\nclass TreeNode:\n    def __init__(self, val=0, left=None, right=None):\n        self.val = val\n        self.left = left\n        self.right = right\n\ndef level_order(root):\n    pass',
-      javascript: '// Write your solution here\nclass TreeNode {\n    constructor(val, left, right) {\n        this.val = (val===undefined ? 0 : val)\n        this.left = (left===undefined ? null : left)\n        this.right = (right===undefined ? null : right)\n    }\n}\n\nfunction levelOrder(root) {\n    // Your code\n}',
-    },
-  },
+  { value: 'python', label: 'Python' },
+  { value: 'javascript', label: 'JavaScript' },
+  { value: 'java', label: 'Java' },
+  { value: 'cpp', label: 'C++' },
+  { value: 'go', label: 'Go' },
 ];
 
 interface Message {
@@ -64,6 +34,16 @@ interface Participant {
   status: 'active' | 'idle';
 }
 
+interface CodeResult {
+  status: string;
+  accepted: boolean;
+  stdout: string;
+  stderr: string;
+  compileOutput: string;
+  time: number | null;
+  memory: number | null;
+}
+
 export function InterviewRoom() {
   const { sessionId } = useParams();
   const { user } = useAuth();
@@ -77,86 +57,224 @@ export function InterviewRoom() {
   const [inputMessage, setInputMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(3600);
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'reconnecting'>('connected');
-  const [participants, setParticipants] = useState<Participant[]>([
-    {
-      id: user?.id || '1',
-      name: user?.name || 'You',
-      role: user?.role || 'candidate',
-      status: 'active',
-    },
-  ]);
+  const [connectionStatus, setConnectionStatus] =
+    useState<'connected' | 'disconnected' | 'reconnecting'>('disconnected');
+  const [participants, setParticipants] = useState<Participant[]>(
+    user
+      ? [{ id: user.id, name: user.name, role: user.role, status: 'active' }]
+      : []
+  );
   const [showParticipants, setShowParticipants] = useState(false);
-  const [currentChallenge, setCurrentChallenge] = useState(CODING_CHALLENGES[0]);
   const [copied, setCopied] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date>(new Date());
 
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const saveTimerRef = useRef<NodeJS.Timeout>();
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const streamingMessageIdRef = useRef<string | null>(null);
 
-  // Initial AI greeting with challenge
+  // ── Socket lifecycle ───────────────────────────────────────────────────────
   useEffect(() => {
-    const greeting: Message = {
-      id: '1',
-      role: 'ai',
-      content: `Hello ${user?.name}! I'm your AI interviewer for session ${sessionId}. Let's begin with a coding challenge.\n\n**${currentChallenge.title}** (${currentChallenge.difficulty})\n\n${currentChallenge.description}\n\nTake your time and feel free to ask questions!`,
-      timestamp: new Date(),
+    if (!sessionId) return;
+
+    const socket = getSocket();
+
+    const onConnect = () => {
+      setConnectionStatus('connected');
+      socket.emit('session:join', { sessionId });
     };
-    setMessages([greeting]);
 
-    // Set initial code template
-    const template = currentChallenge.template[language as keyof typeof currentChallenge.template];
-    if (template) {
-      setCode(template);
+    const onDisconnect = () => setConnectionStatus('disconnected');
+    const onReconnectAttempt = () => setConnectionStatus('reconnecting');
+
+    const onSessionStart = () => {
+      socket.emit('chat:start', { sessionId });
+    };
+
+    const onSessionReconnected = ({ remainingSeconds }: { remainingSeconds: number | null }) => {
+      if (typeof remainingSeconds === 'number') setTimeRemaining(remainingSeconds);
+    };
+
+    const onSessionError = ({ message }: { message: string }) => {
+      setOutput(`Session error: ${message}`);
+    };
+
+    const onTimer = ({ remaining }: { remaining: number }) => {
+      setTimeRemaining(remaining);
+    };
+
+    const onTimeout = () => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `timeout-${Date.now()}`,
+          role: 'ai',
+          content: "Time's up — wrapping the session.",
+          timestamp: new Date(),
+        },
+      ]);
+      socket.emit('session:evaluate', { sessionId });
+    };
+
+    const onChatStream = ({ chunk }: { chunk: string }) => {
+      if (!chunk) return;
+      setIsTyping(false);
+
+      if (!streamingMessageIdRef.current) {
+        const id = `ai-${Date.now()}`;
+        streamingMessageIdRef.current = id;
+        setMessages((prev) => [
+          ...prev,
+          { id, role: 'ai', content: chunk, timestamp: new Date(), isStreaming: true },
+        ]);
+      } else {
+        const id = streamingMessageIdRef.current;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, content: m.content + chunk } : m))
+        );
+      }
+    };
+
+    const onChatDone = () => {
+      const id = streamingMessageIdRef.current;
+      if (id) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m))
+        );
+      }
+      streamingMessageIdRef.current = null;
+    };
+
+    const onChatError = ({ message }: { message: string }) => {
+      setIsTyping(false);
+      streamingMessageIdRef.current = null;
+      setMessages((prev) => [
+        ...prev,
+        { id: `err-${Date.now()}`, role: 'ai', content: `⚠️ ${message}`, timestamp: new Date() },
+      ]);
+    };
+
+    const onCodeRunning = () => {
+      setIsRunning(true);
+      setOutput('Running code…');
+    };
+
+    const onCodeResult = ({ result }: { result: CodeResult }) => {
+      setIsRunning(false);
+      const lines: string[] = [];
+      lines.push(result.accepted ? `✓ ${result.status}` : `✗ ${result.status}`);
+      if (result.stdout) lines.push('', 'Output:', result.stdout);
+      if (result.stderr) lines.push('', 'Stderr:', result.stderr);
+      if (result.compileOutput) lines.push('', 'Compile:', result.compileOutput);
+      if (result.time != null) lines.push('', `Time: ${result.time}s  Memory: ${result.memory ?? '-'}KB`);
+      setOutput(lines.join('\n'));
+    };
+
+    const onCodeError = ({ message }: { message: string }) => {
+      setIsRunning(false);
+      setOutput(`✗ ${message}`);
+    };
+
+    const onEvaluationProcessing = () => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `eval-proc-${Date.now()}`,
+          role: 'ai',
+          content: 'Generating your evaluation…',
+          timestamp: new Date(),
+        },
+      ]);
+    };
+
+    const onEvaluationDone = ({ evaluation }: { evaluation: { id?: string } }) => {
+      const evalId = evaluation?.id ?? sessionId;
+      navigate(`/evaluation/${evalId}`);
+    };
+
+    const onUserOnline = ({ userId }: { userId: string }) => {
+      setParticipants((prev) =>
+        prev.some((p) => p.id === userId)
+          ? prev.map((p) => (p.id === userId ? { ...p, status: 'active' } : p))
+          : [...prev, { id: userId, name: 'Participant', role: 'interviewer', status: 'active' }]
+      );
+    };
+
+    const onUserOffline = ({ userId }: { userId: string }) => {
+      setParticipants((prev) =>
+        prev.map((p) => (p.id === userId ? { ...p, status: 'idle' } : p))
+      );
+    };
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.io.on('reconnect_attempt', onReconnectAttempt);
+    socket.on('session:start', onSessionStart);
+    socket.on('session:reconnected', onSessionReconnected);
+    socket.on('session:error', onSessionError);
+    socket.on('session:timer', onTimer);
+    socket.on('session:timeout', onTimeout);
+    socket.on('chat:stream', onChatStream);
+    socket.on('chat:done', onChatDone);
+    socket.on('chat:error', onChatError);
+    socket.on('code:running', onCodeRunning);
+    socket.on('code:result', onCodeResult);
+    socket.on('code:error', onCodeError);
+    socket.on('evaluation:processing', onEvaluationProcessing);
+    socket.on('evaluation:done', onEvaluationDone);
+    socket.on('user:online', onUserOnline);
+    socket.on('user:offline', onUserOffline);
+
+    if (socket.connected) {
+      onConnect();
     }
-  }, []);
 
-  // Auto-save code
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.io.off('reconnect_attempt', onReconnectAttempt);
+      socket.off('session:start', onSessionStart);
+      socket.off('session:reconnected', onSessionReconnected);
+      socket.off('session:error', onSessionError);
+      socket.off('session:timer', onTimer);
+      socket.off('session:timeout', onTimeout);
+      socket.off('chat:stream', onChatStream);
+      socket.off('chat:done', onChatDone);
+      socket.off('chat:error', onChatError);
+      socket.off('code:running', onCodeRunning);
+      socket.off('code:result', onCodeResult);
+      socket.off('code:error', onCodeError);
+      socket.off('evaluation:processing', onEvaluationProcessing);
+      socket.off('evaluation:done', onEvaluationDone);
+      socket.off('user:online', onUserOnline);
+      socket.off('user:offline', onUserOffline);
+    };
+  }, [sessionId, navigate]);
+
+  // ── Auto-save code locally ─────────────────────────────────────────────────
   useEffect(() => {
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      // Save code to localStorage or API
       localStorage.setItem(`session-${sessionId}-code`, code);
       localStorage.setItem(`session-${sessionId}-language`, language);
       setLastSaved(new Date());
     }, 2000);
-
     return () => {
-      if (saveTimerRef.current) {
-        clearTimeout(saveTimerRef.current);
-      }
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [code, language, sessionId]);
 
-  // Countdown timer
+  // ── Restore saved code on mount ────────────────────────────────────────────
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeRemaining((prev) => (prev > 0 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
+    const savedCode = localStorage.getItem(`session-${sessionId}-code`);
+    const savedLang = localStorage.getItem(`session-${sessionId}-language`);
+    if (savedCode) setCode(savedCode);
+    if (savedLang) setLanguage(savedLang);
+  }, [sessionId]);
 
-  // Auto-scroll chat
+  // ── Auto-scroll chat ───────────────────────────────────────────────────────
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  // Simulate connection heartbeat
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // In production, this would be a WebSocket heartbeat
-      const shouldDisconnect = Math.random() < 0.05; // 5% chance of disconnect
-      if (shouldDisconnect && connectionStatus === 'connected') {
-        setConnectionStatus('reconnecting');
-        setTimeout(() => setConnectionStatus('connected'), 2000);
-      }
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, [connectionStatus]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -164,126 +282,27 @@ export function InterviewRoom() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleRunCode = async () => {
+  const handleRunCode = () => {
+    if (!sessionId || !code.trim()) return;
+    const socket = getSocket();
     setIsRunning(true);
-    setOutput('Running code...\n');
-
-    try {
-      // Use Piston API for real code execution
-      const langConfig = LANGUAGES.find(l => l.value === language);
-      const response = await fetch('https://emkc.org/api/v2/piston/execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          language: langConfig?.pistonId || 'python',
-          version: '*',
-          files: [{
-            content: code,
-          }],
-        }),
-      });
-
-      const result = await response.json();
-
-      if (result.run) {
-        const output = result.run.stdout || result.run.stderr || 'No output';
-        const executionTime = ((result.run.signal || 0) / 1000).toFixed(3);
-        setOutput(`✓ Code executed successfully\n\nOutput:\n${output}\n\nExecution time: ${executionTime}s`);
-      } else {
-        setOutput('✗ Error executing code\n\n' + (result.message || 'Unknown error'));
-      }
-    } catch (error) {
-      // Fallback to mock execution
-      setOutput(`✓ Code executed successfully\n\nOutput:\nHello, World!\n\nExecution time: 0.042s\nMemory: 2.1 MB`);
-    } finally {
-      setIsRunning(false);
-    }
+    setOutput('Running code…');
+    socket.emit('code:execute', { sessionId, language, code });
   };
 
-  const streamAIResponse = async (prompt: string) => {
-    // Simulate streaming response
-    const fullResponse = generateAIResponse(prompt);
-    const messageId = (Date.now() + 1).toString();
+  const handleSendMessage = () => {
+    const text = inputMessage.trim();
+    if (!text || !sessionId) return;
+    const socket = getSocket();
 
-    const aiMessage: Message = {
-      id: messageId,
-      role: 'ai',
-      content: '',
-      timestamp: new Date(),
-      isStreaming: true,
-    };
-
-    setMessages((prev) => [...prev, aiMessage]);
-
-    // Stream characters one by one
-    for (let i = 0; i < fullResponse.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 20));
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId
-            ? { ...msg, content: fullResponse.substring(0, i + 1) }
-            : msg
-        )
-      );
-    }
-
-    // Mark as complete
-    setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === messageId ? { ...msg, isStreaming: false } : msg
-      )
-    );
-  };
-
-  const generateAIResponse = (prompt: string): string => {
-    const responses = [
-      "Great question! Let me help you think through this. Consider the time complexity requirements - we need an efficient solution that works within O(n) or O(n log n) time.",
-      "That's a good approach! Have you considered edge cases like empty arrays or negative numbers? It's important to handle those scenarios.",
-      "I see you're using a hash map - that's an excellent choice for this problem! It gives us O(1) lookup time which is optimal here.",
-      "Let me give you a hint: think about how you can use a stack data structure to solve this problem. The LIFO property is particularly useful here.",
-      "Your solution is on the right track, but I notice a potential issue with the loop logic. Can you walk me through what happens when the array has duplicate values?",
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
-
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim()) return;
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: inputMessage,
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
+    setMessages((prev) => [
+      ...prev,
+      { id: `u-${Date.now()}`, role: 'user', content: text, timestamp: new Date() },
+    ]);
     setInputMessage('');
     setIsTyping(true);
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setIsTyping(false);
-    await streamAIResponse(inputMessage);
-  };
-
-  const handleGenerateChallenge = () => {
-    const newChallenge = CODING_CHALLENGES[Math.floor(Math.random() * CODING_CHALLENGES.length)];
-    setCurrentChallenge(newChallenge);
-
-    const template = newChallenge.template[language as keyof typeof newChallenge.template];
-    if (template) {
-      setCode(template);
-    }
-
-    const challengeMsg: Message = {
-      id: Date.now().toString(),
-      role: 'ai',
-      content: `Here's a new challenge for you:\n\n**${newChallenge.title}** (${newChallenge.difficulty})\n\n${newChallenge.description}\n\nI've updated the code editor with a template. Good luck!`,
-      timestamp: new Date(),
-    };
-
-    setMessages((prev) => [...prev, challengeMsg]);
+    socket.emit('chat:message', { sessionId, content: text });
   };
 
   const handleCopySessionId = () => {
@@ -293,9 +312,11 @@ export function InterviewRoom() {
   };
 
   const handleEndSession = () => {
-    if (confirm('Are you sure you want to end this session?')) {
-      navigate('/evaluation/1');
-    }
+    if (!sessionId) return;
+    if (!confirm('Are you sure you want to end this session?')) return;
+    const socket = getSocket();
+    socket.emit('session:end', { sessionId });
+    socket.emit('session:evaluate', { sessionId });
   };
 
   return (
@@ -381,15 +402,10 @@ export function InterviewRoom() {
                     ))}
                   </select>
 
-                  <Badge variant="language">{currentChallenge.difficulty}</Badge>
-                  <span className="text-sm text-[#F8FAFC]">{currentChallenge.title}</span>
+                  <Badge variant="language">Live</Badge>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={handleGenerateChallenge}>
-                    <Sparkles className="w-4 h-4 mr-1" />
-                    New Challenge
-                  </Button>
                   <Button size="sm" onClick={handleRunCode} disabled={isRunning}>
                     {isRunning ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
                     {isRunning ? 'Running...' : 'Run Code'}
@@ -401,7 +417,7 @@ export function InterviewRoom() {
               <div className="flex-1">
                 <Editor
                   height="60%"
-                  language={language}
+                  language={language === 'cpp' ? 'cpp' : language}
                   value={code}
                   onChange={(value) => setCode(value || '')}
                   theme="vs-dark"
@@ -420,7 +436,7 @@ export function InterviewRoom() {
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm text-[#94A3B8]">Output</h3>
                 </div>
-                <pre className={`text-sm font-mono ${
+                <pre className={`text-sm font-mono whitespace-pre-wrap ${
                   output.includes('✓') ? 'text-[#10B981]' :
                   output.includes('✗') || output.includes('Error') ? 'text-[#EF4444]' :
                   'text-[#F8FAFC]'
@@ -485,7 +501,7 @@ export function InterviewRoom() {
                     type="text"
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                     placeholder="Ask a question..."
                     className="flex-1 px-4 py-2 bg-[#0F172A] border border-[#334155] rounded-lg text-[#F8FAFC] placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#10B981]"
                   />

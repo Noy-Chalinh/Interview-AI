@@ -12,13 +12,27 @@ export function Register() {
     password: '',
     role: 'candidate' as UserRole,
   });
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await register(formData.email, formData.password, formData.name, formData.role);
-    navigate('/lobby');
+    setError(null);
+    setSubmitting(true);
+    try {
+      await register(formData.email, formData.password, formData.name, formData.role);
+      navigate('/lobby');
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.error ||
+        err?.message ||
+        'Registration failed. Please try again.';
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -123,8 +137,14 @@ export function Register() {
               </div>
             </div>
 
-            <Button type="submit" className="w-full mt-6">
-              Create Account
+            {error && (
+              <div className="px-3 py-2 rounded-lg bg-[#EF4444]/10 border border-[#EF4444]/30 text-sm text-[#EF4444]">
+                {error}
+              </div>
+            )}
+
+            <Button type="submit" className="w-full mt-6" disabled={submitting}>
+              {submitting ? 'Creating account…' : 'Create Account'}
             </Button>
           </form>
 

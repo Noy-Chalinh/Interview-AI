@@ -1,100 +1,111 @@
-const judge0 = require('../config/judge0');
+const piston = require('../config/piston');
 const prisma = require('../config/db');
 
-// ── Language ID map ───────────────────────────────────────────────────────────
-// Judge0 language IDs — full list at http://localhost:2358/languages
+// ── Language map ──────────────────────────────────────────────────────────────
+// Maps our user-facing language names to Piston runtime identifiers.
+// Versions are pinned with '*' (latest installed runtime).
 
+// Piston's /execute endpoint uses runtime aliases (e.g. "javascript", "c++"),
+// which differ from the /packages keys ("node", "gcc"). Confirmed via
+// /api/v2/runtimes after installation.
 const LANGUAGE_MAP = {
-  javascript: 63,
-  python:     71,
-  java:       62,
-  cpp:        54,
-  c:          50,
-  typescript: 74,
-  go:         60,
-  rust:       73,
-  kotlin:     78,
-  swift:      83,
-  csharp:     51,
-  php:        68,
-  ruby:       72,
+  javascript: { lang: 'javascript', filename: 'main' },
+  typescript: { lang: 'typescript', filename: 'main' },
+  python:     { lang: 'python',     filename: 'main' },
+  java:       { lang: 'java',       filename: 'Main' },
+  cpp:        { lang: 'c++',        filename: 'main' },
+  c:          { lang: 'c',          filename: 'main' },
+  go:         { lang: 'go',         filename: 'main' },
+  rust:       { lang: 'rust',       filename: 'main' },
+  kotlin:     { lang: 'kotlin',     filename: 'main' },
+  swift:      { lang: 'swift',      filename: 'main' },
+  csharp:     { lang: 'csharp.net', filename: 'main' },
+  php:        { lang: 'php',        filename: 'main' },
+  ruby:       { lang: 'ruby',       filename: 'main' },
 };
 
-// ── Status codes from Judge0 ──────────────────────────────────────────────────
-
-const STATUS = {
-  1:  'In Queue',
-  2:  'Processing',
-  3:  'Accepted',
-  4:  'Wrong Answer',
-  5:  'Time Limit Exceeded',
-  6:  'Compilation Error',
-  7:  'Runtime Error (SIGSEGV)',
-  8:  'Runtime Error (SIGXFSZ)',
-  9:  'Runtime Error (SIGFPE)',
-  10: 'Runtime Error (SIGABRT)',
-  11: 'Runtime Error (NZEC)',
-  12: 'Runtime Error (Other)',
-  13: 'Internal Error',
-  14: 'Exec Format Error',
-};
-
-// ── Submit code to Judge0 ─────────────────────────────────────────────────────
+// ── Submit code to Piston ─────────────────────────────────────────────────────
 
 async function submitCode(language, code, stdin = '') {
-  const languageId = LANGUAGE_MAP[language.toLowerCase()];
+  const cfg = LANGUAGE_MAP[language.toLowerCase()];
 
-  if (!languageId) {
-    throw new Error(`Unsupported language: ${language}. Supported: ${Object.keys(LANGUAGE_MAP).join(', ')}`);
+  if (!cfg) {
+    throw new Error(
+      `Unsupported language: ${language}. Supported: ${Object.keys(LANGUAGE_MAP).join(', ')}`
+    );
   }
 
-  // submit and wait for result in one request (wait=true)
-  const response = await judge0.post('/submissions', {
-    source_code:    Buffer.from(code).toString('base64'),
-    language_id:    languageId,
-    stdin:          stdin ? Buffer.from(stdin).toString('base64') : '',
-    cpu_time_limit: 5,        // 5 seconds max
-    memory_limit:   128000,   // 128MB max
-    encode_base64:  true,
-  }, {
-    params: { base64_encoded: true, wait: true },
-    timeout: 15000 // 15s axios timeout
+  const response = await piston.post('/api/v2/execute', {
+    language: cfg.lang,
+    version: '*',
+    files: [{ name: cfg.filename, content: code }],
+    stdin,
+    compile_timeout: 10000,
+    run_timeout:     3000,
+    compile_memory_limit: -1,
+    run_memory_limit:     -1,
   });
 
   return parseResult(response.data);
 }
 
-// ── Parse Judge0 response ─────────────────────────────────────────────────────
+// ── Parse Piston response ─────────────────────────────────────────────────────
+//
+// Piston returns:
+//   {
+//     language, version,
+//     compile: { stdout, stderr, output, code, signal } (optional),
+//     run:     { stdout, stderr, output, code, signal }
+//   }
+//
+// We translate that into the same result shape the rest of the app already
+// expects, so callers and the DB JSON column don't need to change.
 
 function parseResult(data) {
-  const statusId = data.status?.id;
-  const statusDesc = STATUS[statusId] || 'Unknown';
+  const run = data.run || {};
+  const compile = data.compile || {};
 
-  // decode base64 outputs
-  const stdout = data.stdout
-    ? Buffer.from(data.stdout, 'base64').toString('utf-8')
-    : '';
-  const stderr = data.stderr
-    ? Buffer.from(data.stderr, 'base64').toString('utf-8')
-    : '';
-  const compileOutput = data.compile_output
-    ? Buffer.from(data.compile_output, 'base64').toString('utf-8')
-    : '';
+  const stdout = (run.stdout || '').trim();
+  const stderr = (run.stderr || '').trim();
+  const compileOutput = (compile.stderr || compile.output || '').trim();
+
+  // Synthesise a Judge0-style statusId so the existing UI mapping still works.
+  //  3  = Accepted
+  //  6  = Compilation Error
+  //  5  = Time Limit Exceeded (Piston reports signal=SIGKILL on timeout)
+  // 11  = Runtime Error
+  // 13  = Internal Error
+  let statusId = 3;
+  let status = 'Accepted';
+
+  if (compile.code && compile.code !== 0) {
+    statusId = 6;
+    status = 'Compilation Error';
+  } else if (run.signal === 'SIGKILL') {
+    statusId = 5;
+    status = 'Time Limit Exceeded';
+  } else if (run.code && run.code !== 0) {
+    statusId = 11;
+    status = 'Runtime Error';
+  }
 
   return {
     statusId,
-    status:         statusDesc,
-    accepted:       statusId === 3,
+    status,
+    accepted:          statusId === 3,
     timeLimitExceeded: statusId === 5,
-    stdout:         stdout.trim(),
-    stderr:         stderr.trim(),
-    compileOutput:  compileOutput.trim(),
-    time:           data.time,       // execution time in seconds
-    memory:         data.memory,     // memory used in KB
+    stdout,
+    stderr,
+    compileOutput,
+    message:           '',
+    time:              null, // Piston does not report execution time
+    memory:            null,
+    language:          data.language,
+    version:           data.version,
   };
 }
 
-// ── Execute and persist to DB ─────────────────────────────────────────────────
+// ── Execute and persist ───────────────────────────────────────────────────────
 
 async function executeAndSave(sessionId, language, code, stdin = '') {
   let result;
@@ -102,27 +113,32 @@ async function executeAndSave(sessionId, language, code, stdin = '') {
   try {
     result = await submitCode(language, code, stdin);
   } catch (err) {
-    // Judge0 unreachable or timeout
+    const pistonError =
+      err.response?.data?.message ||
+      err.response?.data?.error ||
+      err.message;
+
     result = {
       statusId:   13,
       status:     'Internal Error',
       accepted:   false,
+      timeLimitExceeded: false,
       stdout:     '',
-      stderr:     err.message,
+      stderr:     pistonError || 'Code execution failed',
       compileOutput: '',
+      message:    pistonError || '',
       time:       null,
       memory:     null,
     };
   }
 
-  // persist to DB regardless of success or failure
   await prisma.codeSubmission.create({
     data: {
       sessionId,
       language,
       code,
       result,
-    }
+    },
   });
 
   return result;
@@ -133,12 +149,12 @@ async function executeAndSave(sessionId, language, code, stdin = '') {
 function getSupportedLanguages() {
   return Object.keys(LANGUAGE_MAP).map((name) => ({
     name,
-    id: LANGUAGE_MAP[name]
+    runtime: LANGUAGE_MAP[name].lang,
   }));
 }
 
 module.exports = {
   executeAndSave,
   getSupportedLanguages,
-  LANGUAGE_MAP
+  LANGUAGE_MAP,
 };

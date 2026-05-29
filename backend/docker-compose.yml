@@ -47,7 +47,7 @@ services:
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
       REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-7d}
       GROQ_API_KEY: ${GROQ_API_KEY}
-      JUDGE0_URL: http://judge0-server:2358
+      PISTON_URL: http://piston:2000
       CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
       PORT: 3000
     depends_on:
@@ -55,7 +55,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      judge0-server:
+      piston:
         condition: service_started
 
   # ── Frontend (Vite dev server / static build) ─────────────────────────────────
@@ -72,66 +72,20 @@ services:
     depends_on:
       - backend
 
-  # ── Judge0 services ────────────────────────────────────────────────────────────
-  judge0-server:
-    image: judge0/judge0:1.13.1
+  # ── Piston code execution sandbox ─────────────────────────────────────────────
+  # Works on cgroup v2 (unlike Judge0 1.13.x).
+  # Language runtimes are installed on first use via the /packages endpoint;
+  # see scripts/piston-bootstrap.sh.
+  piston:
+    image: ghcr.io/engineer-man/piston
     restart: unless-stopped
-    volumes:
-      - ./judge0.conf:/judge0.conf:ro
+    privileged: true
     ports:
-      - "2358:2358"
-    privileged: true
-    environment:
-      REDIS_HOST: judge0-redis
-      REDIS_PORT: 6379
-      REDIS_URL: redis://judge0-redis:6379
-      POSTGRES_HOST: judge0-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: judge0
-      POSTGRES_USER: judge0
-      POSTGRES_PASSWORD: judge0secret
-    depends_on:
-      - judge0-postgres
-      - judge0-redis
-
-  judge0-workers:
-    image: judge0/judge0:1.13.1
-    command: ["./scripts/workers"]
-    restart: unless-stopped
+      - "2358:2000"
     volumes:
-      - ./judge0.conf:/judge0.conf:ro
-    privileged: true
-    environment:
-      REDIS_HOST: judge0-redis
-      REDIS_PORT: 6379
-      REDIS_URL: redis://judge0-redis:6379
-      POSTGRES_HOST: judge0-postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: judge0
-      POSTGRES_USER: judge0
-      POSTGRES_PASSWORD: judge0secret
-    depends_on:
-      - judge0-postgres
-      - judge0-redis
-
-  judge0-postgres:
-    image: postgres:13
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: judge0
-      POSTGRES_USER: judge0
-      POSTGRES_PASSWORD: judge0secret
-    volumes:
-      - judge0-pgdata:/var/lib/postgresql/data
-
-  judge0-redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    volumes:
-      - judge0-redisdata:/data
+      - pistondata:/piston
 
 volumes:
   pgdata:
   redisdata:
-  judge0-pgdata:
-  judge0-redisdata:
+  pistondata:

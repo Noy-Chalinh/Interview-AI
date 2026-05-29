@@ -7,25 +7,38 @@ const router = express.Router();
 
 // ── POST /sessions — create a new interview session ───────────────────────────
 // Only interviewers and admins can create sessions
-router.post('/', authenticate, requireRole('INTERVIEWER', 'ADMIN'), async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
-    const { candidateId } = req.body;
+    const { userId, role } = req.user;
+    const { candidateId, candidateEmail } = req.body;
 
-    if (!candidateId) {
-      return res.status(400).json({ error: 'candidateId is required' });
+    let resolvedCandidateId = candidateId;
+
+    // Candidates can create their own practice session (no body needed)
+    if (role === 'CANDIDATE') {
+      resolvedCandidateId = userId;
+    } else if (role === 'INTERVIEWER' || role === 'ADMIN') {
+      if (!resolvedCandidateId && candidateEmail) {
+        const found = await prisma.user.findUnique({ where: { email: candidateEmail } });
+        if (!found || found.role !== 'CANDIDATE') {
+          return res.status(404).json({ error: 'Candidate not found' });
+        }
+        resolvedCandidateId = found.id;
+      }
+      if (!resolvedCandidateId) {
+        return res.status(400).json({ error: 'candidateId or candidateEmail is required' });
+      }
+    } else {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
-    // verify candidate exists
-    const candidate = await prisma.user.findUnique({
-      where: { id: candidateId }
-    });
-
+    const candidate = await prisma.user.findUnique({ where: { id: resolvedCandidateId } });
     if (!candidate || candidate.role !== 'CANDIDATE') {
       return res.status(404).json({ error: 'Candidate not found' });
     }
 
     const session = await prisma.session.create({
-      data: { candidateId },
+      data: { candidateId: resolvedCandidateId },
       include: { candidate: { select: { id: true, name: true, email: true } } }
     });
 
