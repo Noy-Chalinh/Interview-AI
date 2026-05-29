@@ -38,7 +38,10 @@ router.post('/', authenticate, async (req, res) => {
     }
 
     const session = await prisma.session.create({
-      data: { candidateId: resolvedCandidateId },
+      data: {
+        candidateId: resolvedCandidateId,
+        ...(role === 'INTERVIEWER' || role === 'ADMIN' ? { interviewerId: userId } : {}),
+      },
       include: { candidate: { select: { id: true, name: true, email: true } } }
     });
 
@@ -54,8 +57,16 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const { userId, role } = req.user;
 
+    let where = {};
+    if (role === 'CANDIDATE') {
+      where = { candidateId: userId };
+    } else if (role === 'INTERVIEWER') {
+      where = { interviewerId: userId };
+    }
+    // ADMIN sees all sessions
+
     const sessions = await prisma.session.findMany({
-      where: role === 'CANDIDATE' ? { candidateId: userId } : {},
+      where,
       include: {
         candidate: { select: { id: true, name: true, email: true } },
         evaluation: { select: { score: true } }
@@ -84,6 +95,14 @@ router.get('/:id', authenticate, async (req, res) => {
 
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const { userId, role } = req.user;
+    if (role === 'CANDIDATE' && session.candidateId !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    if (role === 'INTERVIEWER' && session.interviewerId !== userId) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     res.json({ session });

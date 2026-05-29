@@ -19,8 +19,9 @@ model User {
   role         Role     @default(CANDIDATE)
   createdAt    DateTime @default(now())
 
-  sessions      Session[]
-  refreshTokens RefreshToken[]
+  candidateSessions    Session[]      @relation("CandidateSessions")
+  interviewerSessions  Session[]      @relation("InterviewerSessions")
+  refreshTokens        RefreshToken[]
 }
 
 enum Role {
@@ -46,8 +47,11 @@ model Session {
   endedAt   DateTime?
   createdAt DateTime      @default(now())
 
-  candidate   User   @relation(fields: [candidateId], references: [id])
-  candidateId String
+  candidate    User    @relation("CandidateSessions", fields: [candidateId], references: [id])
+  candidateId  String
+
+  interviewer   User?   @relation("InterviewerSessions", fields: [interviewerId], references: [id])
+  interviewerId String?
 
   messages    Message[]
   submissions CodeSubmission[]
