@@ -53,6 +53,13 @@ model Session {
   interviewer   User?   @relation("InterviewerSessions", fields: [interviewerId], references: [id])
   interviewerId String?
 
+  // A room (parent) session is created by an interviewer and holds the roomCode.
+  // Each candidate who joins gets their own child session (own transcript/eval)
+  // linked back to the room via parentId.
+  parent   Session?  @relation("RoomChildren", fields: [parentId], references: [id])
+  parentId String?
+  children Session[] @relation("RoomChildren")
+
   messages    Message[]
   submissions CodeSubmission[]
   evaluation  Evaluation?

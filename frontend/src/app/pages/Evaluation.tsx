@@ -37,7 +37,7 @@ interface Session {
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
-  candidate: { id: string; name: string; email: string };
+  candidate: { id: string; name: string; email: string } | null;
   evaluation: Evaluation | null;
   messages: Message[];
 }
@@ -146,7 +146,7 @@ export function Evaluation() {
             <div>
               <h1 className="text-3xl text-[#F8FAFC] mb-2">Interview Evaluation</h1>
               <div className="flex items-center gap-4 text-sm text-[#94A3B8]">
-                <span>{session.candidate.name}</span>
+                <span>{session.candidate?.name ?? 'Unknown candidate'}</span>
                 <span>•</span>
                 <span>{new Date(session.createdAt).toLocaleDateString()}</span>
                 <span>•</span>

@@ -30,6 +30,25 @@ function fromApiRole(role: string): UserRole {
   return role === 'INTERVIEWER' ? 'interviewer' : 'candidate';
 }
 
+interface JwtClaims {
+  userId: string;
+  email: string;
+  role: string;
+  exp?: number;
+}
+
+// Decode a JWT payload (no verification — just to read identity/role/expiry on
+// the client). Returns null if the token is malformed.
+function decodeJwt(token: string): JwtClaims | null {
+  try {
+    const payload = token.split('.')[1];
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(json) as JwtClaims;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeUser(raw: any): User {
   return {
     id: raw.id,
@@ -46,13 +65,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const token = localStorage.getItem('accessToken');
     const userData = localStorage.getItem('user');
-    if (token && userData) {
-      try {
-        setUser(JSON.parse(userData));
-      } catch {
-        localStorage.removeItem('user');
-      }
+    if (!token) {
+      // No token → not authenticated, drop any orphaned user object.
+      localStorage.removeItem('user');
+      return;
     }
+
+    const claims = decodeJwt(token);
+    if (!claims || (claims.exp && claims.exp * 1000 < Date.now())) {
+      // Token missing/expired/malformed → clear stale auth so the UI and the
+      // backend can never disagree about who is logged in.
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
+      return;
+    }
+
+    // The token is the source of truth for identity and role. The stored user
+    // object only supplies the display name, and only if it matches the token.
+    let stored: User | null = null;
+    try {
+      stored = userData ? (JSON.parse(userData) as User) : null;
+    } catch {
+      stored = null;
+    }
+
+    const fromToken: User = {
+      id: claims.userId,
+      email: claims.email,
+      name: stored && stored.id === claims.userId ? stored.name : claims.email,
+      role: fromApiRole(claims.role),
+    };
+    localStorage.setItem('user', JSON.stringify(fromToken));
+    setUser(fromToken);
   }, []);
 
   // Role is a property of the account (set at registration) and comes from the

@@ -5,6 +5,8 @@ import { Register } from './pages/Register';
 import { SessionLobby } from './pages/SessionLobby';
 import { Dashboard } from './pages/Dashboard';
 import { InterviewRoom } from './pages/InterviewRoomEnhanced';
+import { InterviewerRoom } from './pages/InterviewerRoom';
+import { RoomResults } from './pages/RoomResults';
 import { Evaluation } from './pages/Evaluation';
 import { History } from './pages/History';
 import { QuestionBank } from './pages/QuestionBank';
@@ -32,6 +34,18 @@ export function AppRoutes() {
       <Route path="/interview/:sessionId" element={
         <ProtectedRoute>
           <InterviewRoom />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/room/:roomId" element={
+        <ProtectedRoute>
+          <InterviewerRoom />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/room/:roomId/results" element={
+        <ProtectedRoute>
+          <RoomResults />
         </ProtectedRoute>
       } />
 

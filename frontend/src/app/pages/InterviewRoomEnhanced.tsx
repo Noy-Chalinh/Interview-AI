@@ -197,9 +197,9 @@ export function InterviewRoom() {
       ]);
     };
 
-    const onEvaluationDone = ({ evaluation }: { evaluation: { id?: string } }) => {
-      const evalId = evaluation?.id ?? sessionId;
-      navigate(`/evaluation/${evalId}`);
+    const onEvaluationDone = () => {
+      // The Evaluation page loads by session id, which is always available here.
+      navigate(`/evaluation/${sessionId}`);
     };
 
     const onUserOnline = ({ userId }: { userId: string }) => {
@@ -261,13 +261,18 @@ export function InterviewRoom() {
     };
   }, [sessionId, navigate]);
 
-  // ── Auto-save code locally ─────────────────────────────────────────────────
+  // ── Auto-save code locally + broadcast to observers (interviewer) ──────────
   useEffect(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       localStorage.setItem(`session-${sessionId}-code`, code);
       localStorage.setItem(`session-${sessionId}-language`, language);
       setLastSaved(new Date());
+      // Live-sync editor state so an observing interviewer sees it read-only.
+      const socket = getSocket();
+      if (socket.connected) {
+        socket.emit('code:sync', { sessionId, code, language });
+      }
     }, 2000);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -326,6 +331,8 @@ export function InterviewRoom() {
     if (!sessionId) return;
     if (!confirm('Are you sure you want to end this session?')) return;
     const socket = getSocket();
+    // Mark the session completed and generate the evaluation. generateEvaluation
+    // always produces a row now, so evaluation:done reliably fires and navigates.
     socket.emit('session:end', { sessionId });
     socket.emit('session:evaluate', { sessionId });
   };

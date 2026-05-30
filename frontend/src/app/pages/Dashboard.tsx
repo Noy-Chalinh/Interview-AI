@@ -13,7 +13,7 @@ interface ApiSession {
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
-  candidate: { id: string; name: string; email: string };
+  candidate: { id: string; name: string; email: string } | null;
   evaluation?: { score: number } | null;
 }
 
@@ -268,7 +268,7 @@ export function Dashboard() {
                                 {new Date(session.createdAt).toLocaleDateString()}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-[#F8FAFC]">
-                                {session.candidate.name}
+                                {session.candidate?.name ?? '—'}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm text-[#F8FAFC]">
                                 {dur != null ? `${dur}m` : '—'}

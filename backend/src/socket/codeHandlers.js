@@ -1,3 +1,4 @@
+const prisma = require('../config/db');
 const { executeAndSave, getSupportedLanguages } = require('../services/codeService');
 const { handleCodeReview } = require('../services/aiService');
 
@@ -11,12 +12,12 @@ function registerCodeHandlers(io, socket) {
     }
 
     try {
-      // tell the client execution has started
-      socket.emit('code:running', { sessionId });
+      // tell the room execution has started (candidate + observers)
+      io.to(sessionId).emit('code:running', { sessionId });
 
       const result = await executeAndSave(sessionId, language, code, stdin);
 
-      socket.emit('code:result', { sessionId, result });
+      io.to(sessionId).emit('code:result', { sessionId, result });
 
     } catch (err) {
       console.error('code:execute error:', err);
@@ -33,22 +34,38 @@ function registerCodeHandlers(io, socket) {
 
     try {
       // step 1 — execute
-      socket.emit('code:running', { sessionId });
+      io.to(sessionId).emit('code:running', { sessionId });
       const result = await executeAndSave(sessionId, language, code, stdin);
-      socket.emit('code:result', { sessionId, result });
+      io.to(sessionId).emit('code:result', { sessionId, result });
 
       // step 2 — AI review streams back via chat:stream
-      socket.emit('chat:reviewing', { sessionId });
+      io.to(sessionId).emit('chat:reviewing', { sessionId });
 
       await handleCodeReview(sessionId, language, code, (chunk) => {
-        socket.emit('chat:stream', { sessionId, chunk });
+        io.to(sessionId).emit('chat:stream', { sessionId, chunk });
       });
 
-      socket.emit('chat:done', { sessionId });
+      io.to(sessionId).emit('chat:done', { sessionId });
 
     } catch (err) {
       console.error('code:execute_and_review error:', err);
       socket.emit('code:error', { message: 'Execution or review failed' });
+    }
+  });
+
+  // ── code:sync — candidate broadcasts live editor state to observers ────────
+  // Only the candidate of the session may broadcast; observers (interviewer)
+  // receive it through their room membership and render it read-only.
+  socket.on('code:sync', async ({ sessionId, code, language }) => {
+    try {
+      const session = await prisma.session.findUnique({ where: { id: sessionId } });
+      if (!session) return;
+      if (socket.user.role !== 'CANDIDATE' || session.candidateId !== socket.user.userId) {
+        return; // observers never push edits
+      }
+      socket.to(sessionId).emit('code:sync', { sessionId, code, language });
+    } catch (err) {
+      console.error('code:sync error:', err);
     }
   });
 

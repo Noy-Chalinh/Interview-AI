@@ -145,11 +145,35 @@ async function handleCodeReview(sessionId, language, code, onChunk) {
 
 // ── AI evaluation (called when session ends) ──────────────────────────────────
 
+// Returns the saved Evaluation row (with id). Always produces one — even an
+// empty session gets a minimal zero-score evaluation so the report page is
+// never blank. Idempotent: if an evaluation already exists, it's returned as-is.
 async function generateEvaluation(sessionId) {
+  const existing = await prisma.evaluation.findUnique({ where: { sessionId } });
+  if (existing) {
+    return existing;
+  }
+
   const history = await loadHistory(sessionId);
 
   if (history.length === 0) {
-    return null;
+    return prisma.evaluation.create({
+      data: {
+        sessionId,
+        score: 0,
+        feedback: 'Not enough activity to assess this session.',
+        metrics: {
+          score: 0,
+          feedback: 'Not enough activity to assess this session.',
+          communication: 0,
+          problem_solving: 0,
+          code_quality: 0,
+          technical_knowledge: 0,
+          strengths: [],
+          improvements: []
+        }
+      }
+    });
   }
 
   const transcript = history
@@ -191,8 +215,8 @@ ${transcript}`
   const cleaned = raw.replace(/```json|```/g, '').trim();
   const evaluation = JSON.parse(cleaned);
 
-  // save to DB
-  await prisma.evaluation.create({
+  // save to DB and return the persisted row (with id)
+  return prisma.evaluation.create({
     data: {
       sessionId,
       score: evaluation.score,
@@ -200,8 +224,6 @@ ${transcript}`
       metrics: evaluation
     }
   });
-
-  return evaluation;
 }
 
 module.exports = {

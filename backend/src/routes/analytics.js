@@ -13,10 +13,14 @@ router.get('/overview', authenticate, requireRole('INTERVIEWER', 'ADMIN'), async
   try {
     const { userId, role } = req.user;
 
-    // Interviewers only see analytics for the sessions they own.
-    // Private candidate practice sessions (no interviewerId) are never counted.
-    // ADMIN sees the whole platform.
-    const sessionWhere = role === 'ADMIN' ? {} : { interviewerId: userId };
+    // Only count real interview sessions (those with a candidate). Empty room
+    // containers created by interviewers have no candidate/transcript/score, so
+    // excluding them keeps counts and completion rate meaningful.
+    // Private candidate practice sessions (no interviewerId) are never counted
+    // for interviewers. ADMIN sees the whole platform.
+    const sessionWhere = role === 'ADMIN'
+      ? { candidateId: { not: null } }
+      : { interviewerId: userId, candidateId: { not: null } };
 
     const [
       totalSessions,
@@ -131,7 +135,9 @@ router.get('/sessions', authenticate, async (req, res) => {
     if (role === 'CANDIDATE') {
       where.candidateId = userId;
     } else if (role === 'INTERVIEWER') {
+      // Child sessions only — exclude empty room containers (no candidate).
       where.interviewerId = userId;
+      where.candidateId = { not: null };
     }
 
     // optional status filter

@@ -12,7 +12,7 @@ interface ApiSession {
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
-  candidate: { id: string; name: string; email: string };
+  candidate: { id: string; name: string; email: string } | null;
   evaluation?: { score: number } | null;
 }
 
@@ -40,10 +40,11 @@ export function History() {
   }, []);
 
   const filteredSessions = sessions.filter((session) => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch =
-      session.candidate.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      session.candidate.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      session.id.toLowerCase().includes(searchQuery.toLowerCase());
+      (session.candidate?.name.toLowerCase().includes(q) ?? false) ||
+      (session.candidate?.email.toLowerCase().includes(q) ?? false) ||
+      session.id.toLowerCase().includes(q);
     const matchesStatus = selectedStatus === 'all' || session.status === selectedStatus;
     return matchesSearch && matchesStatus;
   });
@@ -130,8 +131,8 @@ export function History() {
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm text-[#F8FAFC]">{session.candidate.name}</div>
-                            <div className="text-xs text-[#94A3B8]">{session.candidate.email}</div>
+                            <div className="text-sm text-[#F8FAFC]">{session.candidate?.name ?? '—'}</div>
+                            <div className="text-xs text-[#94A3B8]">{session.candidate?.email ?? ''}</div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-[#F8FAFC]">
                             {dur != null ? `${dur}m` : '—'}

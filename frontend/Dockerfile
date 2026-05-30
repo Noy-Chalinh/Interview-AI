@@ -17,5 +17,6 @@ COPY . .
 # Expose port
 EXPOSE 5173
 
-# Start Vite development server
-CMD ["pnpm", "run", "dev", "--", "--host"]
+# Start Vite development server, bound to all interfaces so the published
+# port is reachable from the host (a stray `--` makes Vite ignore --host).
+CMD ["pnpm", "exec", "vite", "--host", "0.0.0.0"]

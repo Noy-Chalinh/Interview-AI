@@ -14,6 +14,7 @@ interface ApiSession {
   createdAt: string;
   candidate: { id: string; name: string; email: string } | null;
   evaluation?: { score: number } | null;
+  _count?: { children: number };
 }
 
 export function SessionLobby() {
@@ -106,9 +107,16 @@ export function SessionLobby() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Interviewers go to their room (roster + observe); candidates go to the
+  // interview room where they talk to the AI.
+  const goToSession = (sessionId: string) => {
+    if (isInterviewer) navigate(`/room/${sessionId}`);
+    else navigate(`/interview/${sessionId}`);
+  };
+
   const handleEnterRoom = (sessionId: string) => {
     setCreatedSession(null);
-    navigate(`/interview/${sessionId}`);
+    goToSession(sessionId);
   };
 
   const statusBadge = (status: ApiSession['status']) => {
@@ -233,9 +241,13 @@ export function SessionLobby() {
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
                         <h3 className="text-[#F8FAFC]">
-                          {session.candidate
-                            ? <>{session.candidate.name} <span className="text-[#94A3B8]">({session.candidate.email})</span></>
-                            : <span className="text-[#94A3B8]">Awaiting candidate…</span>
+                          {isInterviewer
+                            ? <>Interview Room <span className="text-[#94A3B8]">
+                                ({session._count?.children ?? 0} candidate{(session._count?.children ?? 0) === 1 ? '' : 's'})
+                              </span></>
+                            : session.candidate
+                              ? <>{session.candidate.name} <span className="text-[#94A3B8]">({session.candidate.email})</span></>
+                              : <span className="text-[#94A3B8]">Awaiting candidate…</span>
                           }
                         </h3>
                         {statusBadge(session.status)}
@@ -254,10 +266,12 @@ export function SessionLobby() {
                     </div>
                     <Button
                       size="sm"
-                      onClick={() => navigate(`/interview/${session.id}`)}
-                      disabled={session.status === 'COMPLETED' || session.status === 'ABANDONED'}
+                      onClick={() => goToSession(session.id)}
+                      disabled={!isInterviewer && (session.status === 'COMPLETED' || session.status === 'ABANDONED')}
                     >
-                      {session.status === 'COMPLETED' ? 'View' : 'Join'}
+                      {isInterviewer
+                        ? (session.status === 'COMPLETED' ? 'View Roster' : 'Enter Room')
+                        : (session.status === 'COMPLETED' ? 'View' : 'Join')}
                     </Button>
                   </div>
                 </div>
