@@ -11,4 +11,6 @@ RUN npx prisma generate
 
 EXPOSE 3000
 
-CMD ["node", "app.js"]
+# Apply any pending migrations to the (Render-injected) database, then start.
+# Keeps the production schema in sync on every deploy without a manual step.
+CMD ["npm", "run", "start:prod"]

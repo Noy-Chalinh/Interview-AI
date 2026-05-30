@@ -52,11 +52,19 @@ router.post('/join', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'roomCode is required' });
     }
 
-    const match = await prisma.session.findUnique({
-      where: { roomCode: roomCode.trim() }
-    });
+    const code = roomCode.trim();
+
+    // Match case-insensitively so a copy/paste that changed case still resolves
+    // (room codes are UUIDs stored as text; an exact match would otherwise miss).
+    let match = await prisma.session.findUnique({ where: { roomCode: code } });
+    if (!match) {
+      match = await prisma.session.findFirst({
+        where: { roomCode: { equals: code, mode: 'insensitive' } }
+      });
+    }
 
     if (!match) {
+      console.warn(`Join failed: no session for roomCode "${code}" (user ${userId})`);
       return res.status(404).json({ error: 'No room found for that code. Double-check the code with your interviewer.' });
     }
 

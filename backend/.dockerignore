@@ -1,0 +1,10 @@
+# Never bake local env/secrets or installed deps into the image.
+# Render (and other hosts) inject env vars at runtime; deps are installed in-build.
+.env
+.env.*
+node_modules
+npm-debug.log
+Dockerfile
+.dockerignore
+.git
+.gitignore
